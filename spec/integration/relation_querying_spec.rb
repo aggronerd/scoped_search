@@ -36,46 +36,83 @@ ScopedSearch::RSpec::Database.test_databases.each do |db|
 
     context 'querying a :belongs_to relation' do
 
-      before do
+      context 'basic example' do
+        
+        before do
+  
+          # The related class
+          ActiveRecord::Migration.create_table(:hars) { |t| t.string :related }
+          class Har < ActiveRecord::Base; has_many :loos; end
+  
+          # The class on which to call search_for
+          ActiveRecord::Migration.create_table(:loos) { |t| t.string :foo; t.integer :har_id }
+          class Loo < ActiveRecord::Base
+            belongs_to :har
+            scoped_search :in => :har, :on => :related
+          end
+  
+          @har_record = Har.create!(:related => 'bar')
+  
+          Loo.create!(:foo => 'foo',       :har => @har_record)
+          Loo.create!(:foo => 'foo too',   :har => @har_record)
+          Loo.create!(:foo => 'foo three', :har => Har.create!(:related => 'another bar'))
+          Loo.create!(:foo => 'foo four')
+        end
+  
+        after do
+          ScopedSearch::RSpec::Database.drop_model(Har)
+          ScopedSearch::RSpec::Database.drop_model(Loo)
+        end
+  
+        it "should find all records with a related bar record containing bar" do
+          Loo.search_for('bar').length.should == 3
+        end
+  
+        it "should find all records with a related bar record having an exact value of bar with an explicit field" do
+          Loo.search_for('related = bar').length.should == 2
+        end
+  
+        it "should find records for which the bar relation is not set using null?" do
+          Loo.search_for('null? related').length.should == 1
+        end
+  
+        it "should find records for which the bar relation is not set using null?" do
+          Loo.search_for('',:order => 'related asc').first.foo.should eql('foo four')
+        end
+        
+      end
+      
+      context 'model which refers to instances of the same model' do
+        
+        before do
 
-        # The related class
-        ActiveRecord::Migration.create_table(:hars) { |t| t.string :related }
-        class Har < ActiveRecord::Base; has_many :loos; end
+          # The related class
+          ActiveRecord::Migration.create_table(:nodes) { |t| t.string :name; t.integer :parent_id }
+          class Node < ActiveRecord::Base
+            has_many :children, foreign_key: :parent_id, class_name: to_s
+            belongs_to :parent, foreign_key: :parent_id, class_name: to_s
 
-        # The class on which to call search_for
-        ActiveRecord::Migration.create_table(:loos) { |t| t.string :foo; t.integer :har_id }
-        class Loo < ActiveRecord::Base
-          belongs_to :har
-          scoped_search :in => :har, :on => :related
+            scoped_search in: :parent, on: :name, alias: 'parent_name', only_explicit: true
+          end
+
+          @parent = Node.create!(:name => 'parent')
+
+          3.times { Node.create!(:name => 'Child 1', :parent => @parent) }
+
+          Node.create!(:name => 'Orphan') 
         end
 
-        @har_record = Har.create!(:related => 'bar')
+        after do
+          ScopedSearch::RSpec::Database.drop_model(Node)
+        end
 
-        Loo.create!(:foo => 'foo',       :har => @har_record)
-        Loo.create!(:foo => 'foo too',   :har => @har_record)
-        Loo.create!(:foo => 'foo three', :har => Har.create!(:related => 'another bar'))
-        Loo.create!(:foo => 'foo four')
-      end
-
-      after do
-        ScopedSearch::RSpec::Database.drop_model(Har)
-        ScopedSearch::RSpec::Database.drop_model(Loo)
-      end
-
-      it "should find all records with a related bar record containing bar" do
-        Loo.search_for('bar').length.should == 3
-      end
-
-      it "should find all records with a related bar record having an exact value of bar with an explicit field" do
-        Loo.search_for('related = bar').length.should == 2
-      end
-
-      it "should find records for which the bar relation is not set using null?" do
-        Loo.search_for('null? related').length.should == 1
-      end
-
-      it "should find records for which the bar relation is not set using null?" do
-        Loo.search_for('',:order => 'related asc').first.foo.should eql('foo four')
+        it "should return children whos parent has matching name" do
+          Node.search_for('parent_name == "Parent"').length.should == 3
+        end
+        
+        it "should return orphaned nodes" do
+          Node.search_for('null? parent_name').length.should == 2
+        end
       end
 
     end
